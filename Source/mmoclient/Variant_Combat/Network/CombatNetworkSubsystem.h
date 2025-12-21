@@ -128,6 +128,7 @@ protected:
 	void HandlePlayerJoined(const TSharedPtr<FJsonObject>& Data);
 	void HandlePlayerState(const TSharedPtr<FJsonObject>& Data);
 	void HandlePlayerLeft(const TSharedPtr<FJsonObject>& Data);
+	void HandlePositionCorrection(const TSharedPtr<FJsonObject>& Data);
 
 	/** Spawn a remote player pawn */
 	ACombatRemotePlayer* SpawnRemotePlayer(const FString& PlayerId, const FVector& Position);

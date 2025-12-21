@@ -9,6 +9,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/CapsuleComponent.h"
 
 DEFINE_LOG_CATEGORY(LogCombatNetwork);
 
@@ -241,6 +242,10 @@ void UCombatNetworkSubsystem::OnMessage(const FString& Message)
 	{
 		HandlePlayerLeft(Data);
 	}
+	else if (MessageType == TEXT("position_correction"))
+	{
+		HandlePositionCorrection(Data);
+	}
 	else
 	{
 		UE_LOG(LogCombatNetwork, Warning, TEXT("Unknown message type: %s"), *MessageType);
@@ -257,19 +262,46 @@ void UCombatNetworkSubsystem::HandleJoinResponse(const TSharedPtr<FJsonObject>& 
 	LocalPlayerId = Data->GetStringField(TEXT("player_id"));
 	UE_LOG(LogCombatNetwork, Log, TEXT("Joined server with ID: %s"), *LocalPlayerId);
 
-	// Apply spawn offset to local player if provided
-	const TArray<TSharedPtr<FJsonValue>>* OffsetArray;
-	if (Data->TryGetArrayField(TEXT("spawn_offset"), OffsetArray) && OffsetArray->Num() >= 2)
+	// Server sends X/Y spawn position, we find Z via ground trace
+	const TArray<TSharedPtr<FJsonValue>>* SpawnPosArray;
+	if (Data->TryGetArrayField(TEXT("spawn_position"), SpawnPosArray) && SpawnPosArray->Num() >= 2)
 	{
-		float OffsetX = (*OffsetArray)[0]->AsNumber();
-		float OffsetY = (*OffsetArray)[1]->AsNumber();
+		float SpawnX = (*SpawnPosArray)[0]->AsNumber();
+		float SpawnY = (*SpawnPosArray)[1]->AsNumber();
 
 		if (LocalPlayerCharacter.IsValid())
 		{
-			FVector CurrentLocation = LocalPlayerCharacter->GetActorLocation();
-			FVector NewLocation = CurrentLocation + FVector(OffsetX, OffsetY, 0.0f);
-			LocalPlayerCharacter->SetActorLocation(NewLocation);
-			UE_LOG(LogCombatNetwork, Log, TEXT("Applied spawn offset: X=%.1f Y=%.1f"), OffsetX, OffsetY);
+			UWorld* World = GetWorld();
+			if (World)
+			{
+				// Trace down from high up to find the ground
+				FVector TraceStart(SpawnX, SpawnY, 50000.0f);
+				FVector TraceEnd(SpawnX, SpawnY, -50000.0f);
+
+				FHitResult HitResult;
+				FCollisionQueryParams QueryParams;
+				QueryParams.AddIgnoredActor(LocalPlayerCharacter.Get());
+
+				float SpawnZ = 0.0f;
+				// Use WorldStatic channel which hits terrain/floors reliably
+				if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, QueryParams))
+				{
+					// Spawn above ground - use capsule half height to avoid clipping
+					float CapsuleHalfHeight = LocalPlayerCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+					SpawnZ = HitResult.Location.Z + CapsuleHalfHeight + 10.0f;
+					UE_LOG(LogCombatNetwork, Log, TEXT("Ground trace hit at Z=%.1f, spawning at Z=%.1f"), HitResult.Location.Z, SpawnZ);
+				}
+				else
+				{
+					// Fallback: keep current Z if no ground found
+					SpawnZ = LocalPlayerCharacter->GetActorLocation().Z;
+					UE_LOG(LogCombatNetwork, Warning, TEXT("No ground found at spawn X=%.1f Y=%.1f, keeping current Z=%.1f"), SpawnX, SpawnY, SpawnZ);
+				}
+
+				FVector SpawnLocation(SpawnX, SpawnY, SpawnZ);
+				LocalPlayerCharacter->SetActorLocation(SpawnLocation);
+				UE_LOG(LogCombatNetwork, Log, TEXT("Teleported to server spawn position: X=%.1f Y=%.1f Z=%.1f"), SpawnX, SpawnY, SpawnZ);
+			}
 		}
 	}
 
@@ -292,11 +324,39 @@ void UCombatNetworkSubsystem::HandlePlayerJoined(const TSharedPtr<FJsonObject>& 
 		return;
 	}
 
-	UE_LOG(LogCombatNetwork, Log, TEXT("Player joined: %s (will spawn on first position update)"), *PlayerId);
+	// Get spawn X/Y from server, find Z via ground trace
+	FVector SpawnPosition = FVector::ZeroVector;
+	const TArray<TSharedPtr<FJsonValue>>* PosArray;
+	if (Data->TryGetArrayField(TEXT("position"), PosArray) && PosArray->Num() >= 2)
+	{
+		SpawnPosition.X = (*PosArray)[0]->AsNumber();
+		SpawnPosition.Y = (*PosArray)[1]->AsNumber();
 
-	// Don't spawn here - wait for first player_state message which has the actual position
-	// This prevents spawning on top of other players at origin
-	OnRemotePlayerJoined.Broadcast(PlayerId, FVector::ZeroVector);
+		// Find ground Z using WorldStatic trace
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			FVector TraceStart(SpawnPosition.X, SpawnPosition.Y, 50000.0f);
+			FVector TraceEnd(SpawnPosition.X, SpawnPosition.Y, -50000.0f);
+
+			FHitResult HitResult;
+			FCollisionQueryParams QueryParams;
+
+			if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, QueryParams))
+			{
+				// 100 units above ground for remote players (no capsule ref yet)
+				SpawnPosition.Z = HitResult.Location.Z + 100.0f;
+			}
+		}
+	}
+
+	UE_LOG(LogCombatNetwork, Log, TEXT("Player joined: %s at position X=%.1f Y=%.1f Z=%.1f"),
+		*PlayerId, SpawnPosition.X, SpawnPosition.Y, SpawnPosition.Z);
+
+	// Spawn the remote player immediately at the calculated position
+	SpawnRemotePlayer(PlayerId, SpawnPosition);
+
+	OnRemotePlayerJoined.Broadcast(PlayerId, SpawnPosition);
 }
 
 void UCombatNetworkSubsystem::HandlePlayerState(const TSharedPtr<FJsonObject>& Data)
@@ -395,6 +455,31 @@ void UCombatNetworkSubsystem::HandlePlayerLeft(const TSharedPtr<FJsonObject>& Da
 
 	DestroyRemotePlayer(PlayerId);
 	OnRemotePlayerLeft.Broadcast(PlayerId);
+}
+
+void UCombatNetworkSubsystem::HandlePositionCorrection(const TSharedPtr<FJsonObject>& Data)
+{
+	if (!Data.IsValid())
+	{
+		return;
+	}
+
+	// Server is correcting our position (anti-cheat)
+	const TArray<TSharedPtr<FJsonValue>>* PosArray;
+	if (Data->TryGetArrayField(TEXT("position"), PosArray) && PosArray->Num() >= 3)
+	{
+		FVector CorrectedPosition;
+		CorrectedPosition.X = (*PosArray)[0]->AsNumber();
+		CorrectedPosition.Y = (*PosArray)[1]->AsNumber();
+		CorrectedPosition.Z = (*PosArray)[2]->AsNumber();
+
+		if (LocalPlayerCharacter.IsValid())
+		{
+			LocalPlayerCharacter->SetActorLocation(CorrectedPosition);
+			UE_LOG(LogCombatNetwork, Warning, TEXT("Position corrected by server to X=%.1f Y=%.1f Z=%.1f"),
+				CorrectedPosition.X, CorrectedPosition.Y, CorrectedPosition.Z);
+		}
+	}
 }
 
 ACombatRemotePlayer* UCombatNetworkSubsystem::SpawnRemotePlayer(const FString& PlayerId, const FVector& Position)
