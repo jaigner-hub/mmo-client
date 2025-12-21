@@ -1,0 +1,25 @@
+# Unreal Engine generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio files
+.vs/
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+# JetBrains Rider
+.idea/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Upgrade logs
+UpgradeLog*.htm
