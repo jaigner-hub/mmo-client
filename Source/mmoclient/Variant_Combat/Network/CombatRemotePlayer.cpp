@@ -91,17 +91,12 @@ void ACombatRemotePlayer::ApplyDamage(float Damage, AActor* DamageCauser, const 
 	HitReactionTimer = 0.5f;
 
 	// Apply small knockback impulse to movement component (reduced for remote players)
+	// Use velocity change mode for more predictable knockback without physics issues
 	GetCharacterMovement()->AddImpulse(DamageImpulse * 0.1f, true);
 
-	// Set physics blend weight for partial ragdoll visual (same as local player's TakeDamage)
-	GetMesh()->SetPhysicsBlendWeight(0.5f);
-	GetMesh()->SetBodySimulatePhysics(PelvisBoneName, false);
-
-	// Only add mesh impulse if already simulating physics (like local player does)
-	if (GetMesh()->IsSimulatingPhysics())
-	{
-		GetMesh()->AddImpulseAtLocation(DamageImpulse * GetMesh()->GetMass() * 0.3f, DamageLocation);
-	}
+	// NOTE: Do NOT enable physics blend weight for remote players - it causes floor clipping
+	// because the physics simulation conflicts with CharacterMovement's ground detection.
+	// Remote players rely on network position updates, so ragdoll physics isn't appropriate.
 
 	// Call BP handler to play effects
 	ReceivedDamage(Damage, DamageLocation, DamageImpulse.GetSafeNormal());
@@ -111,16 +106,10 @@ void ACombatRemotePlayer::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Handle hit reaction timer
+	// Handle hit reaction timer - pause network position updates during hit reaction
 	if (HitReactionTimer > 0.0f)
 	{
 		HitReactionTimer -= DeltaTime;
-
-		// When timer expires, reset physics blend
-		if (HitReactionTimer <= 0.0f)
-		{
-			GetMesh()->SetPhysicsBlendWeight(0.0f);
-		}
 
 		// Don't chase network position during hit reaction
 		return;

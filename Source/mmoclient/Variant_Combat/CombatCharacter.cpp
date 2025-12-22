@@ -26,6 +26,11 @@ ACombatCharacter::ACombatCharacter()
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(35.0f, 90.0f);
 
+	// Enable mesh collision for physics impulses (required for AddImpulseAtLocation)
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GetMesh()->SetCollisionResponseToAllChannels(ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+
 	// Configure character movement
 	GetCharacterMovement()->MaxWalkSpeed = 400.0f;
 
@@ -488,6 +493,11 @@ void ACombatCharacter::Landed(const FHitResult& Hit)
 void ACombatCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Force mesh collision enabled for physics impulses (overrides Blueprint settings)
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GetMesh()->SetCollisionResponseToAllChannels(ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
 
 	// get the life bar from the widget component (may be null for remote players)
 	if (LifeBar)

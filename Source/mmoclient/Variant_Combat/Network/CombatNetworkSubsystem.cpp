@@ -262,12 +262,19 @@ void UCombatNetworkSubsystem::HandleJoinResponse(const TSharedPtr<FJsonObject>& 
 	LocalPlayerId = Data->GetStringField(TEXT("player_id"));
 	UE_LOG(LogCombatNetwork, Log, TEXT("Joined server with ID: %s"), *LocalPlayerId);
 
+	// Debug: Check if LocalPlayerCharacter is valid
+	UE_LOG(LogCombatNetwork, Log, TEXT("LocalPlayerCharacter valid: %s"), LocalPlayerCharacter.IsValid() ? TEXT("YES") : TEXT("NO"));
+
 	// Server sends X/Y spawn position, we find Z via ground trace
 	const TArray<TSharedPtr<FJsonValue>>* SpawnPosArray;
-	if (Data->TryGetArrayField(TEXT("spawn_position"), SpawnPosArray) && SpawnPosArray->Num() >= 2)
+	bool bHasSpawnPos = Data->TryGetArrayField(TEXT("spawn_position"), SpawnPosArray) && SpawnPosArray->Num() >= 2;
+	UE_LOG(LogCombatNetwork, Log, TEXT("Has spawn_position array: %s"), bHasSpawnPos ? TEXT("YES") : TEXT("NO"));
+
+	if (bHasSpawnPos)
 	{
 		float SpawnX = (*SpawnPosArray)[0]->AsNumber();
 		float SpawnY = (*SpawnPosArray)[1]->AsNumber();
+		UE_LOG(LogCombatNetwork, Log, TEXT("Server spawn position: X=%.1f Y=%.1f"), SpawnX, SpawnY);
 
 		if (LocalPlayerCharacter.IsValid())
 		{
@@ -504,7 +511,7 @@ ACombatRemotePlayer* UCombatNetworkSubsystem::SpawnRemotePlayer(const FString& P
 	}
 
 	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
 	UE_LOG(LogCombatNetwork, Log, TEXT("Spawning remote player at X=%.1f Y=%.1f Z=%.1f"), Position.X, Position.Y, Position.Z);
 
