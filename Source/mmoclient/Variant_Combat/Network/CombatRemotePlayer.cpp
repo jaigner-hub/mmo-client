@@ -208,6 +208,14 @@ void ACombatRemotePlayer::OnAnimationStateChanged(ECombatAnimationState NewState
 			AnimInstance->Montage_Stop(0.2f);
 			break;
 
+		case ECombatAnimationState::Jumping:
+			// Trigger jump so the animation blueprint sees IsFalling() = true
+			if (GetCharacterMovement() && !GetCharacterMovement()->IsFalling())
+			{
+				Jump();
+			}
+			break;
+
 		case ECombatAnimationState::ComboAttack:
 			// Play combo attack montage
 			if (ComboAttackMontage)

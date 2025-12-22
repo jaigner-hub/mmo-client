@@ -13,6 +13,7 @@ enum class ECombatAnimationState : uint8
 {
 	Idle,
 	Moving,
+	Jumping,
 	ComboAttack,
 	ChargedAttackCharging,
 	ChargedAttackRelease,

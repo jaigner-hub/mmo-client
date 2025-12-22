@@ -712,6 +712,12 @@ ECombatAnimationState ACombatCharacter::GetCurrentAnimationState() const
 		return ECombatAnimationState::ComboAttack;
 	}
 
+	// Check if jumping/falling
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		return ECombatAnimationState::Jumping;
+	}
+
 	// Check movement
 	if (GetVelocity().SizeSquared() > 100.0f)
 	{
