@@ -246,6 +246,14 @@ void UCombatNetworkSubsystem::OnMessage(const FString& Message)
 	{
 		HandlePositionCorrection(Data);
 	}
+	else if (MessageType == TEXT("damage"))
+	{
+		HandleDamage(Data);
+	}
+	else if (MessageType == TEXT("respawn"))
+	{
+		HandleRespawn(Data);
+	}
 	else
 	{
 		UE_LOG(LogCombatNetwork, Warning, TEXT("Unknown message type: %s"), *MessageType);
@@ -551,6 +559,148 @@ void UCombatNetworkSubsystem::NetworkTick()
 
 	FCombatNetworkState State = LocalPlayerCharacter->GetNetworkState();
 	SendPlayerState(State);
+}
+
+void UCombatNetworkSubsystem::SendAttack(const FString& TargetPlayerId)
+{
+	if (!IsConnected())
+	{
+		return;
+	}
+
+	TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
+	Data->SetStringField(TEXT("target_id"), TargetPlayerId);
+
+	SendMessage(TEXT("attack"), Data);
+	UE_LOG(LogCombatNetwork, Log, TEXT("Sent attack request for target: %s"), *TargetPlayerId);
+}
+
+void UCombatNetworkSubsystem::HandleDamage(const TSharedPtr<FJsonObject>& Data)
+{
+	if (!Data.IsValid())
+	{
+		return;
+	}
+
+	FString AttackerId = Data->GetStringField(TEXT("attacker_id"));
+	FString TargetId = Data->GetStringField(TEXT("target_id"));
+	float Damage = Data->GetNumberField(TEXT("damage"));
+	float TargetHP = Data->GetNumberField(TEXT("target_hp"));
+	bool bTargetDead = Data->GetBoolField(TEXT("target_dead"));
+
+	UE_LOG(LogCombatNetwork, Log, TEXT("Damage event: %s hit %s for %.0f damage (HP: %.0f, Dead: %s)"),
+		*AttackerId, *TargetId, Damage, TargetHP, bTargetDead ? TEXT("YES") : TEXT("NO"));
+
+	// Is the target the local player?
+	if (TargetId == LocalPlayerId)
+	{
+		if (LocalPlayerCharacter.IsValid())
+		{
+			// Update local player HP from server
+			LocalPlayerCharacter->SetCurrentHP(TargetHP);
+
+			if (bTargetDead)
+			{
+				LocalPlayerCharacter->HandleDeath();
+			}
+			else
+			{
+				// Play hit reaction
+				LocalPlayerCharacter->ReceivedDamage(Damage, LocalPlayerCharacter->GetActorLocation(), FVector::ForwardVector);
+			}
+		}
+	}
+	else
+	{
+		// It's a remote player
+		ACombatRemotePlayer** FoundPlayer = RemotePlayers.Find(TargetId);
+		if (FoundPlayer && *FoundPlayer)
+		{
+			ACombatRemotePlayer* RemotePlayer = *FoundPlayer;
+
+			// Update HP from server
+			RemotePlayer->SetCurrentHP(TargetHP);
+
+			if (bTargetDead)
+			{
+				// Disable movement, play death
+				RemotePlayer->HandleDeath();
+			}
+			else
+			{
+				// Play hit effect (visual only, no damage applied)
+				FVector DamageDir = FVector::ForwardVector;
+				if (ACombatRemotePlayer** AttackerPlayer = RemotePlayers.Find(AttackerId))
+				{
+					DamageDir = (RemotePlayer->GetActorLocation() - (*AttackerPlayer)->GetActorLocation()).GetSafeNormal();
+				}
+				RemotePlayer->ReceivedDamage(Damage, RemotePlayer->GetActorLocation(), DamageDir);
+			}
+		}
+	}
+}
+
+void UCombatNetworkSubsystem::HandleRespawn(const TSharedPtr<FJsonObject>& Data)
+{
+	if (!Data.IsValid())
+	{
+		return;
+	}
+
+	FString PlayerId = Data->GetStringField(TEXT("player_id"));
+	float HP = Data->GetNumberField(TEXT("hp"));
+	float MaxHPValue = Data->GetNumberField(TEXT("max_hp"));
+
+	// Get spawn position
+	FVector SpawnPosition = FVector::ZeroVector;
+	const TArray<TSharedPtr<FJsonValue>>* PosArray;
+	if (Data->TryGetArrayField(TEXT("position"), PosArray) && PosArray->Num() >= 2)
+	{
+		SpawnPosition.X = (*PosArray)[0]->AsNumber();
+		SpawnPosition.Y = (*PosArray)[1]->AsNumber();
+
+		// Find ground Z
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			FVector TraceStart(SpawnPosition.X, SpawnPosition.Y, 50000.0f);
+			FVector TraceEnd(SpawnPosition.X, SpawnPosition.Y, -50000.0f);
+
+			FHitResult HitResult;
+			FCollisionQueryParams QueryParams;
+
+			if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, QueryParams))
+			{
+				SpawnPosition.Z = HitResult.Location.Z + 100.0f;
+			}
+		}
+	}
+
+	UE_LOG(LogCombatNetwork, Log, TEXT("Respawn event: %s at X=%.1f Y=%.1f Z=%.1f with HP=%.0f"),
+		*PlayerId, SpawnPosition.X, SpawnPosition.Y, SpawnPosition.Z, HP);
+
+	// Is this the local player?
+	if (PlayerId == LocalPlayerId)
+	{
+		if (LocalPlayerCharacter.IsValid())
+		{
+			LocalPlayerCharacter->SetActorLocation(SpawnPosition);
+			LocalPlayerCharacter->SetCurrentHP(HP);
+			LocalPlayerCharacter->HandleRespawn();
+		}
+	}
+	else
+	{
+		// Remote player respawn
+		ACombatRemotePlayer** FoundPlayer = RemotePlayers.Find(PlayerId);
+		if (FoundPlayer && *FoundPlayer)
+		{
+			ACombatRemotePlayer* RemotePlayer = *FoundPlayer;
+			RemotePlayer->SetActorLocation(SpawnPosition);
+			RemotePlayer->SetCurrentHP(HP);
+			RemotePlayer->HandleRespawn();
+		}
+	}
 }
 
 void UCombatNetworkSubsystem::SendMessage(const FString& Type, const TSharedPtr<FJsonObject>& Data)

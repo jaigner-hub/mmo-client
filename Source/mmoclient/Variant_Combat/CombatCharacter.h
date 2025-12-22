@@ -282,6 +282,14 @@ public:
 	/** Handles death events */
 	virtual void HandleDeath() override;
 
+	/** Handles respawn (called when server says we respawned) */
+	UFUNCTION(BlueprintCallable, Category="Combat")
+	virtual void HandleRespawn();
+
+	/** Set HP directly (used by server-authoritative damage) */
+	UFUNCTION(BlueprintCallable, Category="Combat")
+	void SetCurrentHP(float NewHP);
+
 	/** Handles healing events */
 	virtual void ApplyHealing(float Healing, AActor* Healer) override;
 

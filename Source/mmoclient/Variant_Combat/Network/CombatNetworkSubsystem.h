@@ -77,6 +77,13 @@ public:
 	void SendPlayerState(const FCombatNetworkState& State);
 
 	/**
+	 * Send an attack request to the server (server validates and applies damage)
+	 * @param TargetPlayerId The ID of the player being attacked
+	 */
+	UFUNCTION(BlueprintCallable, Category="Network")
+	void SendAttack(const FString& TargetPlayerId);
+
+	/**
 	 * Set the class to spawn for remote players
 	 */
 	UFUNCTION(BlueprintCallable, Category="Network")
@@ -129,6 +136,8 @@ protected:
 	void HandlePlayerState(const TSharedPtr<FJsonObject>& Data);
 	void HandlePlayerLeft(const TSharedPtr<FJsonObject>& Data);
 	void HandlePositionCorrection(const TSharedPtr<FJsonObject>& Data);
+	void HandleDamage(const TSharedPtr<FJsonObject>& Data);
+	void HandleRespawn(const TSharedPtr<FJsonObject>& Data);
 
 	/** Spawn a remote player pawn */
 	ACombatRemotePlayer* SpawnRemotePlayer(const FString& PlayerId, const FVector& Position);

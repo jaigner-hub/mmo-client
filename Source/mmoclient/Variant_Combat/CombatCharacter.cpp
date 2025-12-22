@@ -15,6 +15,9 @@
 #include "TimerManager.h"
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
+#include "Network/CombatNetworkSubsystem.h"
+#include "Network/CombatRemotePlayer.h"
+#include "Kismet/GameplayStatics.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -284,22 +287,42 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 	if (GetWorld()->SweepMultiByObjectType(OutHits, TraceStart, TraceEnd, FQuat::Identity, ObjectParams, CollisionShape, QueryParams))
 	{
+		// Get network subsystem for server-authoritative attacks
+		UCombatNetworkSubsystem* NetworkSubsystem = nullptr;
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			NetworkSubsystem = GameInstance->GetSubsystem<UCombatNetworkSubsystem>();
+		}
+
 		// iterate over each object hit
 		for (const FHitResult& CurrentHit : OutHits)
 		{
-			// check if we've hit a damageable actor
-			ICombatDamageable* Damageable = Cast<ICombatDamageable>(CurrentHit.GetActor());
-
-			if (Damageable)
+			// Check if we hit a remote player (server-authoritative damage)
+			if (ACombatRemotePlayer* RemotePlayer = Cast<ACombatRemotePlayer>(CurrentHit.GetActor()))
 			{
-				// knock upwards and away from the impact normal
-				const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse) + (FVector::UpVector * MeleeLaunchImpulse);
+				// Send attack to server - server validates and applies damage
+				if (NetworkSubsystem && NetworkSubsystem->IsConnected())
+				{
+					NetworkSubsystem->SendAttack(RemotePlayer->GetPlayerId());
+					// Play attack effect locally (server will confirm damage)
+					DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+				}
+			}
+			else
+			{
+				// Not a remote player - apply damage locally (NPCs, destructibles, etc.)
+				ICombatDamageable* Damageable = Cast<ICombatDamageable>(CurrentHit.GetActor());
+				if (Damageable)
+				{
+					// knock upwards and away from the impact normal
+					const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse) + (FVector::UpVector * MeleeLaunchImpulse);
 
-				// pass the damage event to the actor
-				Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
+					// pass the damage event to the actor
+					Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
 
-				// call the BP handler to play effects, etc.
-				DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+					// call the BP handler to play effects, etc.
+					DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+				}
 			}
 		}
 	}
@@ -419,13 +442,75 @@ void ACombatCharacter::HandleDeath()
 	GetMesh()->SetSimulatePhysics(true);
 
 	// hide the life bar
-	LifeBar->SetHiddenInGame(true);
+	if (LifeBar)
+	{
+		LifeBar->SetHiddenInGame(true);
+	}
 
 	// pull back the camera
-	GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+	if (GetCameraBoom())
+	{
+		GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+	}
 
-	// schedule respawning
-	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ACombatCharacter::RespawnCharacter, RespawnTime, false);
+	// Only schedule local respawn if NOT connected to server
+	// Server-authoritative respawn will be handled by HandleRespawn
+	UCombatNetworkSubsystem* NetworkSubsystem = nullptr;
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		NetworkSubsystem = GameInstance->GetSubsystem<UCombatNetworkSubsystem>();
+	}
+
+	if (!NetworkSubsystem || !NetworkSubsystem->IsConnected())
+	{
+		// Offline mode - schedule local respawn
+		GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ACombatCharacter::RespawnCharacter, RespawnTime, false);
+	}
+	// If connected, server will send respawn message
+}
+
+void ACombatCharacter::HandleRespawn()
+{
+	// Re-enable movement
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+	// Disable ragdoll physics
+	GetMesh()->SetSimulatePhysics(false);
+	GetMesh()->SetPhysicsBlendWeight(0.0f);
+	GetMesh()->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	GetMesh()->SetRelativeTransform(MeshStartingTransform);
+
+	// Show the life bar
+	if (LifeBar)
+	{
+		LifeBar->SetHiddenInGame(false);
+	}
+
+	// Reset camera
+	if (GetCameraBoom())
+	{
+		GetCameraBoom()->TargetArmLength = DefaultCameraDistance;
+	}
+
+	// Update life bar
+	if (LifeBarWidget)
+	{
+		LifeBarWidget->SetLifePercentage(CurrentHP / MaxHP);
+	}
+
+	// Clear respawn timer
+	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+}
+
+void ACombatCharacter::SetCurrentHP(float NewHP)
+{
+	CurrentHP = FMath::Clamp(NewHP, 0.0f, MaxHP);
+
+	// Update the life bar
+	if (LifeBarWidget)
+	{
+		LifeBarWidget->SetLifePercentage(CurrentHP / MaxHP);
+	}
 }
 
 void ACombatCharacter::ApplyHealing(float Healing, AActor* Healer)
