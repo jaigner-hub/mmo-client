@@ -628,13 +628,26 @@ void UCombatNetworkSubsystem::HandleDamage(const TSharedPtr<FJsonObject>& Data)
 			}
 			else
 			{
-				// Play hit effect (visual only, no damage applied)
+				// Calculate damage direction from attacker
 				FVector DamageDir = FVector::ForwardVector;
-				if (ACombatRemotePlayer** AttackerPlayer = RemotePlayers.Find(AttackerId))
+				FVector AttackerLocation = FVector::ZeroVector;
+
+				// Check if attacker is local player
+				if (AttackerId == LocalPlayerId && LocalPlayerCharacter.IsValid())
 				{
-					DamageDir = (RemotePlayer->GetActorLocation() - (*AttackerPlayer)->GetActorLocation()).GetSafeNormal();
+					AttackerLocation = LocalPlayerCharacter->GetActorLocation();
+					DamageDir = (RemotePlayer->GetActorLocation() - AttackerLocation).GetSafeNormal();
 				}
-				RemotePlayer->ReceivedDamage(Damage, RemotePlayer->GetActorLocation(), DamageDir);
+				// Check if attacker is a remote player
+				else if (ACombatRemotePlayer** AttackerPlayer = RemotePlayers.Find(AttackerId))
+				{
+					AttackerLocation = (*AttackerPlayer)->GetActorLocation();
+					DamageDir = (RemotePlayer->GetActorLocation() - AttackerLocation).GetSafeNormal();
+				}
+
+				// Call ApplyDamage to trigger hit reaction (sets HitReactionTimer, knockback, BP event)
+				FVector DamageImpulse = DamageDir * 500.0f;
+				RemotePlayer->ApplyDamage(Damage, nullptr, RemotePlayer->GetActorLocation(), DamageImpulse);
 			}
 		}
 	}

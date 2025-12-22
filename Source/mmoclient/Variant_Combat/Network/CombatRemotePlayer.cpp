@@ -83,6 +83,14 @@ float ACombatRemotePlayer::TakeDamage(float DamageAmount, FDamageEvent const& Da
 	return 0.0f;
 }
 
+void ACombatRemotePlayer::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	// Reset physics blend when landing (same as local player)
+	GetMesh()->SetPhysicsBlendWeight(0.0f);
+}
+
 void ACombatRemotePlayer::ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
 {
 	// Apply visual effects without modifying HP (HP comes from network)
@@ -90,15 +98,37 @@ void ACombatRemotePlayer::ApplyDamage(float Damage, AActor* DamageCauser, const 
 	// Pause network position updates during hit reaction
 	HitReactionTimer = 0.5f;
 
-	// Apply small knockback impulse to movement component (reduced for remote players)
-	// Use velocity change mode for more predictable knockback without physics issues
-	GetCharacterMovement()->AddImpulse(DamageImpulse * 0.1f, true);
+	// Apply knockback via CharacterMovement (same as local player)
+	GetCharacterMovement()->AddImpulse(DamageImpulse, true);
 
-	// NOTE: Do NOT enable physics blend weight for remote players - it causes floor clipping
-	// because the physics simulation conflicts with CharacterMovement's ground detection.
-	// Remote players rely on network position updates, so ragdoll physics isn't appropriate.
+	// Enable physics blend (same as local player) - NOT full simulate physics
+	GetMesh()->SetPhysicsBlendWeight(0.5f);
 
-	// Call BP handler to play effects
+	// Lock pelvis to prevent falling over
+	FName BoneToLock = PelvisBoneName.IsNone() ? FName("pelvis") : PelvisBoneName;
+	GetMesh()->SetBodySimulatePhysics(BoneToLock, false);
+
+	// Timer fallback to reset physics blend (in case Landed() doesn't trigger)
+	FTimerHandle PhysicsResetTimer;
+	GetWorld()->GetTimerManager().SetTimer(PhysicsResetTimer, [this]()
+	{
+		if (IsValid(this))
+		{
+			GetMesh()->SetPhysicsBlendWeight(0.0f);
+		}
+	}, 0.5f, false);
+
+	// Play hit reaction montage if set
+	if (HitReactionMontage)
+	{
+		UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+		if (AnimInstance && !AnimInstance->Montage_IsPlaying(HitReactionMontage))
+		{
+			AnimInstance->Montage_Play(HitReactionMontage, 1.0f);
+		}
+	}
+
+	// Call BP handler to play effects (sounds, particles, etc.)
 	ReceivedDamage(Damage, DamageLocation, DamageImpulse.GetSafeNormal());
 }
 
@@ -242,6 +272,55 @@ void ACombatRemotePlayer::OnAnimationStateChanged(ECombatAnimationState NewState
 				MovementComp->DisableMovement();
 			}
 			break;
+	}
+}
+
+void ACombatRemotePlayer::HandleDeath()
+{
+	// Disable movement
+	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
+	{
+		MovementComp->DisableMovement();
+	}
+
+	// Enable ragdoll physics
+	GetMesh()->SetSimulatePhysics(true);
+
+	// Ensure ragdoll collides with floor (block both Static and Dynamic)
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+
+	// Hide the life bar
+	if (LifeBar)
+	{
+		LifeBar->SetHiddenInGame(true);
+	}
+}
+
+void ACombatRemotePlayer::HandleRespawn()
+{
+	// Disable ragdoll physics
+	GetMesh()->SetSimulatePhysics(false);
+	GetMesh()->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	GetMesh()->SetRelativeTransform(MeshStartingTransform);
+
+	// Re-enable movement
+	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
+	{
+		MovementComp->SetMovementMode(MOVE_Walking);
+	}
+
+	// Show the life bar
+	if (LifeBar)
+	{
+		LifeBar->SetHiddenInGame(false);
+	}
+
+	// Reset HP display
+	if (LifeBarWidget)
+	{
+		LifeBarWidget->SetLifePercentage(1.0f);
 	}
 }
 

@@ -40,11 +40,11 @@ class ACombatCharacter : public ACharacter, public ICombatAttacker, public IComb
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FollowCamera;
 
+protected:
+
 	/** Life bar widget component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UWidgetComponent* LifeBar;
-	
-protected:
 
 	/** Jump Input Action */
 	UPROPERTY(EditAnywhere, Category ="Input")
@@ -75,8 +75,8 @@ protected:
 	UInputAction* ToggleCameraAction;
 
 	/** Max amount of HP the character will have on respawn */
-	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
-	float MaxHP = 5.0f;
+	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 1000))
+	float MaxHP = 100.0f;
 
 	/** Current amount of HP the character has */
 	UPROPERTY(VisibleAnywhere, Category="Damage")
@@ -158,6 +158,10 @@ protected:
 	/** Name of the AnimMontage section that corresponds to the attack */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
 	FName ChargeAttackSection;
+
+	/** AnimMontage that will play when taking damage */
+	UPROPERTY(EditAnywhere, Category="Damage")
+	UAnimMontage* HitReactionMontage;
 
 	/** Flag that determines if the player is currently holding the charged attack input */
 	bool bIsChargingAttack = false;
@@ -309,7 +313,7 @@ public:
 	/** Overrides landing to reset damage ragdoll physics */
 	virtual void Landed(const FHitResult& Hit) override;
 
-protected:
+public:
 
 	/** Blueprint handler to play damage dealt effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")

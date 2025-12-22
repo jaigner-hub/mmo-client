@@ -39,6 +39,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="Network")
 	FString GetPlayerId() const { return PlayerId; }
 
+	/** Override to prevent ragdoll physics (causes floor clipping) */
+	virtual void HandleDeath() override;
+
+	/** Override to re-enable movement after respawn */
+	virtual void HandleRespawn() override;
+
+	/** Override to apply visual effects without modifying HP */
+	virtual void ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) override;
+
 protected:
 
 	/** Called every frame */
@@ -54,8 +63,8 @@ protected:
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
 		class AController* EventInstigator, AActor* DamageCauser) override;
 
-	/** Override to apply visual effects without modifying HP */
-	virtual void ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) override;
+	/** Override to reset physics blend when landing */
+	virtual void Landed(const FHitResult& Hit) override;
 
 	/** Handle animation state changes from network */
 	void OnAnimationStateChanged(ECombatAnimationState NewState, int32 NewComboStage);
