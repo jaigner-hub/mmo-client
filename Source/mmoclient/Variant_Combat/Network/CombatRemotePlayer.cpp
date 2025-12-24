@@ -57,9 +57,8 @@ void ACombatRemotePlayer::BeginPlay()
 	{
 		MovementComp->GravityScale = 1.0f;
 		MovementComp->bEnablePhysicsInteraction = false;
-		// Face direction of movement
-		MovementComp->bOrientRotationToMovement = true;
-		MovementComp->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
+		// Don't orient to movement - rotation comes from network
+		MovementComp->bOrientRotationToMovement = false;
 	}
 
 	// Keep default pawn collision so attacks can hit remote players
@@ -176,6 +175,9 @@ void ACombatRemotePlayer::ApplyNetworkState(const FCombatNetworkState& NewState)
 		// Teleport X/Y only, keep current Z so we fall to ground
 		SetActorLocation(FVector(NewState.Position.X, NewState.Position.Y, CurrentLoc.Z));
 	}
+
+	// Apply rotation from network (only yaw - characters don't pitch/roll)
+	SetActorRotation(FRotator(0.0f, NewState.Rotation.Yaw, 0.0f));
 
 	// Check for animation state changes
 	if (NewState.AnimState != LastAnimState || NewState.ComboStage != LastComboStage)
