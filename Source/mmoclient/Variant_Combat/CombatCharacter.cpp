@@ -295,11 +295,21 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 			NetworkSubsystem = GameInstance->GetSubsystem<UCombatNetworkSubsystem>();
 		}
 
+		// Track already-hit actors to avoid duplicate attacks (sweep can hit same actor multiple times)
+		TSet<AActor*> AlreadyHitActors;
+
 		// iterate over each object hit
 		for (const FHitResult& CurrentHit : OutHits)
 		{
+			AActor* HitActor = CurrentHit.GetActor();
+			if (!HitActor || AlreadyHitActors.Contains(HitActor))
+			{
+				continue;
+			}
+			AlreadyHitActors.Add(HitActor);
+
 			// Check if we hit a remote player (server-authoritative damage)
-			if (ACombatRemotePlayer* RemotePlayer = Cast<ACombatRemotePlayer>(CurrentHit.GetActor()))
+			if (ACombatRemotePlayer* RemotePlayer = Cast<ACombatRemotePlayer>(HitActor))
 			{
 				// Send attack to server - server validates and applies damage
 				if (NetworkSubsystem && NetworkSubsystem->IsConnected())
@@ -312,7 +322,7 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 			else
 			{
 				// Not a remote player - apply damage locally (NPCs, destructibles, etc.)
-				ICombatDamageable* Damageable = Cast<ICombatDamageable>(CurrentHit.GetActor());
+				ICombatDamageable* Damageable = Cast<ICombatDamageable>(HitActor);
 				if (Damageable)
 				{
 					// knock upwards and away from the impact normal
